@@ -304,6 +304,7 @@ def main():
     parser.add_argument("--raw", action="store_true", help="Raw decompressed response")
     parser.add_argument("--response-only", action="store_true", help="Response only")
     parser.add_argument("--index", "-i", type=int, help="Record index for cleaned files")
+    parser.add_argument("--count", action="store_true", help="Show entry count and size per hour_key time window")
     args = parser.parse_args()
 
     if args.file:
@@ -312,6 +313,36 @@ def main():
             print(f"File not found: {fp}", file=sys.stderr)
             sys.exit(1)
         view_cleaned(fp, args.index)
+        return
+
+    # ── --count: stats per hour_key ──────────────────────────
+    if args.count:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT hour_key, COUNT(*) as cnt, SUM(body_len) as body_total, SUM(COALESCE(length(response),0)) as resp_total "
+                "FROM entries GROUP BY hour_key ORDER BY hour_key DESC"
+            ).fetchall()
+        finally:
+            conn.close()
+        rows = [dict(r) for r in rows]
+        if not rows:
+            print("No entries found.")
+            sys.exit(1)
+        total_entries = sum(r["cnt"] for r in rows)
+        total_body = sum(r["body_total"] or 0 for r in rows)
+        total_resp = sum(r["resp_total"] or 0 for r in rows)
+        print(f"\n{'Time window':<18}  {'Entries':>7}  {'Body size':>10}  {'Resp size':>10}")
+        print(f"{'-'*18}  {'-'*7}  {'-'*10}  {'-'*10}")
+        for r in rows:
+            hk = r["hour_key"]
+            cnt = r["cnt"]
+            bt = _format_size(r["body_total"] or 0)
+            rt = _format_size(r["resp_total"] or 0)
+            print(f"  {hk}  {cnt:>5}   {bt:>10}  {rt:>10}")
+        sep = f"{'-'*52}"
+        print(sep)
+        print(f"{'Total':<18}  {total_entries:>5}   {_format_size(total_body):>10}  {_format_size(total_resp):>10}\n")
         return
 
     requests = list_requests(str(DB_PATH), args.date, args.hour)
