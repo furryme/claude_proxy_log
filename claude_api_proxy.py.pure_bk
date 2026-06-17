@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""
+Claude API 代理服务器（无日志记录版本）
+
+与 claude_api_proxy.py 的区别：不记录请求/响应数据，无 request_logger / log_store 依赖。
+适用于只需要代理转发、不需要抓包的场景。
+
+用法:
+    python claude_api_proxy.py.pure_bk
+    PROXY_PORT=8002 python claude_api_proxy.py.pure_bk
+
+路由规则:
+    - 请求体 model 字段匹配 config/routes.json 中的路由时，转发到对应的上游地址
+    - 未匹配的 model 使用 __default_upstream__ 兜底
+
+配置:
+    config/routes.json（参见 claude_api_proxy.py 文档）
+
+配置 Claude Code 使用此代理:
+    export ANTHROPIC_BASE_URL=http://127.0.0.1:8001
+"""
+
+import gzip
+import json
+import os
+import sys
+import http.server
+import urllib.request
+import urllib.error
+
+UPSTREAM_TIMEOUT = int(os.environ.get("UPSTREAM_TIMEOUT", 1200))
+
+LISTEN_PORT = int(os.environ.get("PROXY_PORT", 8001))
+
+# Cookie 缓存：file_path -> "key1=val1; key2=val2"
+_COOKIE_CACHE: dict[str, str] = {}
+
+
+def _load_routes_config() -> tuple[dict, str]:
+    """从 JSON 配置文件加载路由。
+
+    文件格式 (config/routes.json):
+    {
+        "Qwen3.6-27B": { "url": "...", "cookie_file": "..." },
+        "OtherModel": "http://simple-url",
+        "__default_upstream__": "https://fallback-url"
+    }
+
+    返回 (ROUTES, DEFAULT_UPSTREAM)
+    """
+    config_path = os.environ.get("CONFIG_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "routes.json"))
+
+    if not os.path.isfile(config_path):
+        print(f"  [error] routes config not found: {config_path}", file=sys.stderr)
+        print(f"  [error] Create config/routes.json or set CONFIG_PATH env var", file=sys.stderr)
+        sys.exit(1)
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    default_upstream = data.pop("__default_upstream__", "http://localhost:8000")
+    routes: dict[str, dict | str] = data
+
+    # 验证格式
+    for model, entry in routes.items():
+        if isinstance(entry, str):
+            continue
+        if isinstance(entry, dict):
+            if "url" not in entry:
+                print(f"  [error] route {model!r} missing 'url' key", file=sys.stderr)
+                sys.exit(1)
+            continue
+        print(f"  [error] route {model!r} must be string or object with 'url'", file=sys.stderr)
+        sys.exit(1)
+
+    return routes, default_upstream
+
+
+ROUTES, DEFAULT_UPSTREAM = _load_routes_config()
+
+
+def _resolve_route(model: str) -> tuple[str, str | None]:
+    """返回 (upstream_url, cookie_header_or_None)"""
+    entry = ROUTES.get(model)
+    if isinstance(entry, dict):
+        url = entry["url"]
+        cookie_file = entry.get("cookie_file")
+    else:
+        url = entry
+        cookie_file = None
+
+    cookie_header = None
+    if cookie_file and os.path.isfile(cookie_file):
+        if cookie_file not in _COOKIE_CACHE:
+            cookies: list[str] = []
+            with open(cookie_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    # 如果行中包含分号，说明是 "k1=v1; k2=v2" 格式，拆开
+                    if ";" in line:
+                        for part in line.split(";"):
+                            part = part.strip()
+                            if "=" in part:
+                                cookies.append(part)
+                        continue
+                    # 支持 Netscape 格式
+                    parts = line.split()
+                    if len(parts) >= 7:
+                        name, value = parts[5], parts[6]
+                        cookies.append(f"{name}={value}")
+                    elif "=" in parts[0]:
+                        cookies.append(parts[0])
+            _COOKIE_CACHE[cookie_file] = "; ".join(cookies) if cookies else ""
+        cookie_header = _COOKIE_CACHE[cookie_file]
+
+    return url, cookie_header
+
+# Routes are loaded from config/routes.json by _load_routes_config()
+
+
+def forward(request: http.server.BaseHTTPRequestHandler) -> None:
+    path = request.path
+    method = request.command
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ("host", "connection", "transfer-encoding")
+    }
+
+    # Read body — use request.headers directly (case-insensitive) instead of headers dict
+    content_length = int(request.headers.get("Content-Length", 0))
+    body = request.rfile.read(content_length) if content_length > 0 else b""
+
+    # Handle gzip encoding (new Claude Code may send compressed body)
+    if body and (request.headers.get("Content-Encoding") or "").lower() == "gzip":
+        body = gzip.decompress(body)
+        headers["Content-Length"] = str(len(body))
+
+    # Determine model and upstream
+    model = None
+    if body:
+        try:
+            data = json.loads(body)
+            model = data.get("model", "")
+        except json.JSONDecodeError:
+            print(f"  body not JSON, {len(body)} bytes", file=sys.stderr)
+
+    upstream, cookie_header = _resolve_route(model) if model else (DEFAULT_UPSTREAM, None)
+    if not upstream:
+        upstream = DEFAULT_UPSTREAM
+    target = upstream.rstrip("/") + path
+
+    # Inject cookie header if configured for this model
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+
+    # Debug: 打印转发信息
+    cookie_info = ""
+    if cookie_header:
+        cookie_keys = [c.split("=")[0] for c in cookie_header.split("; ")]
+        cookie_info = f"  (cookie={len(cookie_keys)} keys: {', '.join(cookie_keys)})"
+    print(f"  model={model!r}  ->  {method} {path}  ->  {target}{cookie_info}", file=sys.stderr)
+
+    # Forward
+    req = urllib.request.Request(target, data=body, headers=headers, method=method)
+    try:
+        resp = urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT)
+        print(f"  <- {resp.status}", file=sys.stderr)
+        request.send_response(resp.status)
+        for k, v in resp.headers.items():
+            if k.lower() not in ("transfer-encoding", "connection"):
+                request.send_header(k, v)
+        request.end_headers()
+
+        # Stream response back
+        try:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                request.wfile.write(chunk)
+        except BrokenPipeError:
+            pass  # Client disconnected
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        print(f"  <- {e.code} ERROR: {err_body.decode('utf-8', errors='replace')[:200]}", file=sys.stderr)
+        request.send_response(e.code)
+        for k, v in e.headers.items():
+            request.send_header(k, v)
+        request.end_headers()
+        request.wfile.write(err_body)
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError):
+            print(f"  upstream timeout ({UPSTREAM_TIMEOUT}s): {e.reason}", file=sys.stderr)
+            request.send_response(504)
+            request.send_header("content-type", "text/plain")
+            request.end_headers()
+            request.wfile.write(b"Upstream timeout")
+        else:
+            print(f"  URL error: {e}", file=sys.stderr)
+            request.send_response(502)
+            request.send_header("content-type", "text/plain")
+            request.end_headers()
+            request.wfile.write(str(e).encode())
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        forward(self)
+
+    def do_POST(self):
+        forward(self)
+
+    def do_OPTIONS(self):
+        forward(self)
+
+    def do_DELETE(self):
+        forward(self)
+
+    def log_message(self, fmt, *args):
+        print(f"[{self.log_date_time_string()}] {args[0]}", file=sys.stderr)
+
+
+def main():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler)
+    print(f"Proxy listening on 127.0.0.1:{LISTEN_PORT}")
+    print(f"Routes:")
+    for model, upstream in ROUTES.items():
+        print(f"  {model} -> {upstream}")
+    print(f"  * (default) -> {DEFAULT_UPSTREAM}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -25,7 +25,6 @@ config/routes.json
 
 # Backup files
 *.bk
-*.pure_bk
 *.swp
 *~
 
