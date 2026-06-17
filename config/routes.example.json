@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy this file to routes.json and fill in real values. Do NOT commit routes.json with real credentials.",
+  "ExampleModel": {
+    "url": "http://your-upstream-host:port/path",
+    "cookie_file": "/path/to/cookies.txt"
+  },
+  "SimpleModel": "http://another-upstream:port",
+  "__default_upstream__": "http://fallback-host:port"
+}

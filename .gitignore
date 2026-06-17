@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Claude local config
+.claude/
+
+# Logs and data — real business data, do not commit
+logs/
+*.db
+
+# Prompt pipeline data — real captured data
+prompt-pipeline/data/
+
+# Model dependencies — large files, copy from model directory
+prompt-pipeline/model-deps/
+
+# Config with real credentials
+config/routes.json
+
+# Backup files
+*.bk
+*.pure_bk
+*.swp
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local

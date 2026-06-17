@@ -1,0 +1,2 @@
+# No runtime dependencies for the proxy itself.
+# The cleaner/archiver also uses only stdlib.
