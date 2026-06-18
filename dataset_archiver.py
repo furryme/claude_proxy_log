@@ -14,12 +14,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import shutil
 import sys
 import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import zstandard as zstd
 
 from log_store import DB_PATH, get_connection
 from dataset_cleaner import clean_time_window
@@ -42,7 +45,7 @@ def _find_time_windows() -> list[str]:
 
 
 def _is_already_archived(hour_key: str) -> bool:
-    archive_file = ARCHIVES_DIR / f"dataset_{hour_key}.tar.gz"
+    archive_file = ARCHIVES_DIR / f"dataset_{hour_key}.tar.zst"
     return archive_file.exists()
 
 
@@ -64,17 +67,27 @@ def _clean(hour_key: str) -> Path | None:
 
 def _compress(cleaned_dir: Path) -> Path | None:
     key = cleaned_dir.name
-    archive_file = ARCHIVES_DIR / f"dataset_{key}.tar.gz"
+    archive_file = ARCHIVES_DIR / f"dataset_{key}.tar.zst"
     ARCHIVES_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[archiver] Compressing -> {archive_file}", file=sys.stderr)
     try:
-        with tarfile.open(archive_file, "w:gz", compresslevel=6) as tar:
+        # Build tar into a buffer first
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
             dataset_file = cleaned_dir / "dataset.jsonl"
             if dataset_file.exists():
                 tar.add(dataset_file, arcname="dataset.jsonl")
             for f in cleaned_dir.glob("*.json"):
                 tar.add(f, arcname=f.name)
-        with tarfile.open(archive_file, "r:gz") as tar:
+        tar_data = buf.getvalue()
+        # Compress with zstd
+        cctx = zstd.ZstdCompressor(level=19)
+        compressed = cctx.compress(tar_data)
+        archive_file.write_bytes(compressed)
+        # Verify by decompressing and checking tar contents
+        dctx = zstd.ZstdDecompressor()
+        decompressed = dctx.decompress(compressed)
+        with tarfile.open(fileobj=io.BytesIO(decompressed), mode="r") as tar:
             members = tar.getnames()
         print(f"[archiver] Archive verified: {len(members)} files", file=sys.stderr)
         return archive_file
@@ -111,7 +124,7 @@ def _retain_archives(days: int = 0):
     if days <= 0 or not ARCHIVES_DIR.exists():
         return
     cutoff = datetime.now() - timedelta(days=days)
-    for archive in ARCHIVES_DIR.glob("dataset_*.tar.gz"):
+    for archive in ARCHIVES_DIR.glob("dataset_*.tar.zst"):
         try:
             name = archive.stem.replace("dataset_", "")
             date_str = name[:-3]
