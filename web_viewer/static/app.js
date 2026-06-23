@@ -349,6 +349,7 @@ async function viewRequest(seqId) {
   $("#chatFooter").classList.add("hidden");
   $("#systemPanel").classList.add("hidden");
   $("#toolsPanel").classList.add("hidden");
+  state._tools = [];
 
   try {
     const data = await api(`/api/requests/${seqId}`, { full: 1 });
@@ -467,11 +468,12 @@ function renderChat(data) {
   // Tools
   const tools = data.request ? data.request.tools || [] : [];
   if (tools.length) {
+    state._tools = tools;
     $("#toolsCount").textContent = tools.length;
-    $("#toolsList").innerHTML = tools.map(t => {
+    $("#toolsList").innerHTML = tools.map((t, i) => {
       const name = t.function ? t.function.name : t.name || "?";
       const desc = t.function ? t.function.description || "" : t.description || "";
-      return `<div class="tool-card">
+      return `<div class="tool-card" onclick="openToolModal(${i})">
         <div class="tool-card-name">${escHtml(name)}</div>
         <div class="tool-card-desc">${escHtml(desc)}</div>
       </div>`;
@@ -520,6 +522,21 @@ function showRawModal() {
 
 function closeRawModal() {
   $("#rawModal").classList.add("hidden");
+}
+
+function openToolModal(idx) {
+  const tool = state._tools && state._tools[idx];
+  if (!tool) return;
+  const name = tool.function ? tool.function.name : tool.name || "?";
+  const desc = tool.function ? tool.function.description || "" : tool.description || "";
+  $("#toolModalTitle").textContent = name;
+  $("#toolModalBody").innerHTML = renderMarkdown(desc);
+  $("#toolModalJson").textContent = JSON.stringify(tool, null, 2);
+  $("#toolModal").classList.remove("hidden");
+}
+
+function closeToolModal() {
+  $("#toolModal").classList.add("hidden");
 }
 
 // ── Sidebar toggle ──────────────────────────────────

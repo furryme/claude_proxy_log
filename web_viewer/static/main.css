@@ -893,15 +893,10 @@ body {
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
   padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color var(--transition);
 }
-
-.tool-card-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--accent);
-  margin-bottom: 3px;
-  font-family: var(--font-mono);
-}
+.tool-card:hover { border-color: var(--accent); }
 
 .tool-card-desc {
   font-size: 12px;
@@ -911,6 +906,100 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ── Tool Detail Modal ─────────────────────────── */
+.tool-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--modal-backdrop);
+}
+
+.tool-modal-content {
+  position: relative;
+  width: 90%;
+  max-width: 780px;
+  max-height: 80vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-modal-title {
+  font-weight: 600;
+  font-size: 15px;
+  font-family: var(--font-mono);
+  color: var(--cyan);
+}
+
+.tool-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.tool-modal-body .message-text {
+  background: transparent;
+  padding: 0;
+}
+
+/* ── Tool JSON Block ───────────────────────────── */
+.tool-json-block {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tool-json-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--tool-bg);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+.tool-json-header:hover { color: var(--text-secondary); }
+
+.tool-json-content {
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 300px;
+  white-space: pre;
+  margin: 0;
+}
+
+.tool-json-block.collapsed .tool-json-content { display: none; }
+.tool-json-block.collapsed .tool-toggle { transform: rotate(-90deg); }
 
 /* ── Raw Modal ──────────────────────────────────── */
 .raw-modal {

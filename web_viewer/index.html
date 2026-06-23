@@ -119,6 +119,27 @@
           </div>
           <div class="tools-list" id="toolsList"></div>
         </div>
+        <!-- Tool detail modal -->
+        <div class="tool-modal hidden" id="toolModal">
+          <div class="tool-modal-backdrop" onclick="closeToolModal()"></div>
+          <div class="tool-modal-content">
+            <div class="tool-modal-header">
+              <span class="tool-modal-title" id="toolModalTitle"></span>
+              <button class="close-btn" onclick="closeToolModal()">&times;</button>
+            </div>
+            <div class="tool-modal-body">
+              <div class="message-text" id="toolModalBody"></div>
+              <div class="tool-json-block collapsed">
+                <div class="tool-json-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                  <span>Raw Tool Definition</span>
+                  <span class="tool-toggle">&#9660;</span>
+                </div>
+                <pre class="tool-json-content" id="toolModalJson"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Raw response modal -->
         <div class="raw-modal hidden" id="rawModal">
           <div class="raw-modal-backdrop" onclick="closeRawModal()"></div>
