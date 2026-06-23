@@ -239,12 +239,16 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
                 # No logging: zero-Python-loop, C-level copy
                 shutil.copyfileobj(resp, request.wfile, length=RESPONSE_CHUNK_SIZE)
         except BrokenPipeError:
+            # Client disconnected — close upstream immediately so
+            # vllm-server stops generating (no resource leak).
+            resp.close()
             _finish_log(status=resp.status, error="broken_pipe")
 
         _finish_log(status=resp.status)
 
     except urllib.error.HTTPError as e:
         err_body = e.read()
+        e.close()  # close upstream connection to avoid leaving it open
         print(f"  <- {e.code} ERROR: {err_body.decode('utf-8', errors='replace')[:200]}", file=sys.stderr)
         if logger:
             try:
@@ -257,7 +261,10 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
         for k, v in e.headers.items():
             request.send_header(k, v)
         request.end_headers()
-        request.wfile.write(err_body)
+        try:
+            request.wfile.write(err_body)
+        except BrokenPipeError:
+            pass
 
     except urllib.error.URLError as e:
         reason = getattr(e, "reason", str(e))

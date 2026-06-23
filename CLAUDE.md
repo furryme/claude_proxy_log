@@ -92,6 +92,19 @@ CREATE INDEX idx_ts ON entries(ts);
 
 ## 已知问题与修复
 
+### 客户端断开后上游连接泄漏（已修复）
+
+**症状**：客户端超时重试后，vllm-server 上的原始请求仍在持续生成（长达十几分钟）。
+
+**根因**：`forward()` 中 `BrokenPipeError` 被捕获后只调用了 `_finish_log()`，上游 `resp` 连接从未关闭 → vllm-server 不知道客户端已走，keep-alive 连接持续输出 SSE。
+
+**修复**（`claude_api_proxy.py`）：
+- 流式响应 `BrokenPipeError` 分支增加 `resp.close()` — 立即关闭上游 TCP 连接
+- `HTTPError` 分支增加 `e.close()` — 防御性关闭
+- `HTTPError` 回写客户端也加 `BrokenPipeError` 处理
+
+**原理**：`resp.close()` 关闭 TCP 读端，vllm-server 下一次 SSE 输出时写入已关闭连接 → 收到 SIGPIPE/RST → 中止生成。
+
 ### writer 线程空转导致 CPU 100%（已修复）
 
 **症状**：代理启动后无流量，CPU 100% 持续。
