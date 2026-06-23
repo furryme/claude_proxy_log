@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat Log Viewer</title>
+<link rel="stylesheet" href="/static/main.css">
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1>Chat Log Viewer</h1>
+      <div class="header-buttons">
+        <button class="sidebar-toggle" id="themeToggle" title="Toggle theme">&#9789;</button>
+        <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
+      </div>
+    </div>
+
+    <div class="summary-card" id="summaryCard">
+      <div class="summary-row">
+        <span class="summary-num" id="sumTotal">-</span>
+        <span class="summary-label">Total</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-num ok" id="sumOk">-</span>
+        <span class="summary-label">OK</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-num err" id="sumErr">-</span>
+        <span class="summary-label">Error</span>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <label>Filter</label>
+      <div class="filter-row">
+        <select id="filterModel"><option value="">All Models</option></select>
+      </div>
+    </div>
+
+    <nav class="hours-nav">
+      <div class="hours-header">Time Windows</div>
+      <div class="hours-list" id="hoursList"></div>
+    </nav>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main-content" id="mainContent">
+    <div class="content-header">
+      <button class="sidebar-open-btn hidden" id="sidebarOpenBtn" title="Open sidebar">&#9776;</button>
+      <div class="breadcrumb" id="breadcrumb">Dashboard</div>
+      <div class="header-actions">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="Search by seq_id...">
+        </div>
+      </div>
+    </div>
+
+    <div class="view-area" id="viewArea">
+      <!-- Dashboard (default view) -->
+      <div class="dashboard-view" id="dashboardView">
+        <div class="model-stats" id="modelStats"></div>
+        <div class="recent-activity">
+          <h2>Recent Activity</h2>
+          <div id="recentChart"></div>
+        </div>
+      </div>
+
+      <!-- Request list view -->
+      <div class="request-list-view hidden" id="requestListView">
+        <div class="list-toolbar">
+          <div class="list-info" id="listInfo"></div>
+          <div class="pagination" id="pagination"></div>
+        </div>
+        <table class="requests-table" id="requestsTable">
+          <thead>
+            <tr>
+              <th>Seq</th>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Body</th>
+              <th>Response</th>
+              <th>Messages</th>
+            </tr>
+          </thead>
+          <tbody id="requestsBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Chat detail view -->
+      <div class="chat-view hidden" id="chatView">
+        <div class="chat-header" id="chatHeader"></div>
+        <div class="chat-body-wrapper">
+          <div class="chat-body" id="chatBody"></div>
+        </div>
+        <div class="chat-footer" id="chatFooter">
+          <button class="btn btn-sm" id="btnToggleSystem" title="Toggle system prompt">System</button>
+          <button class="btn btn-sm" id="btnToggleTools" title="Toggle tools list">Tools</button>
+          <button class="btn btn-sm" id="btnRawResponse" title="View raw response">Raw</button>
+          <a class="btn btn-sm" id="btnNextReq" href="#">Next &rarr;</a>
+        </div>
+        <!-- System prompt panel -->
+        <div class="system-panel hidden" id="systemPanel">
+          <div class="system-panel-header">
+            <span>System Prompt (<span id="systemLen">0</span> chars)</span>
+            <button class="collapse-btn" onclick="toggleSystemPanel()">&#9664;</button>
+          </div>
+          <pre class="system-text" id="systemText"></pre>
+        </div>
+        <!-- Tools panel -->
+        <div class="tools-panel hidden" id="toolsPanel">
+          <div class="tools-panel-header">
+            <span>Tools (<span id="toolsCount">0</span>)</span>
+            <button class="collapse-btn" onclick="toggleToolsPanel()">&#9664;</button>
+          </div>
+          <div class="tools-list" id="toolsList"></div>
+        </div>
+        <!-- Raw response modal -->
+        <div class="raw-modal hidden" id="rawModal">
+          <div class="raw-modal-backdrop" onclick="closeRawModal()"></div>
+          <div class="raw-modal-content">
+            <div class="raw-modal-header">
+              <span>Raw Response</span>
+              <button class="close-btn" onclick="closeRawModal()">&times;</button>
+            </div>
+            <pre class="raw-text" id="rawText"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

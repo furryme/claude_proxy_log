@@ -21,6 +21,10 @@ Claude API 反向代理，新增抓包 + 数据归档功能，用于构建训练
 | `dataset_archiver.py` | 按 `hour_key` 查询 SQLite → 清洗 → 压缩 tar.gz → `DELETE FROM entries` | `archive_window(date_str, hour_str, dry_run, keep_source, ...)` |
 | `archive_cron.py` | cron 安装/管理，仅调用 archiver | 不直接交互数据库 |
 | `log_viewer.py` | 交互式查看 SQLite 日志 | `list_requests(db_path, date, hour)` / `view_request(seq_id, ...)` / `get_request(db_path, seq_id)` |
+| `web_viewer/api.py` | 浏览器端日志查看器后端 API | `GET /api/summary`, `GET /api/hours`, `GET /api/requests`, `GET /api/requests/:seq_id` |
+| `web_viewer/index.html` | 浏览器端日志查看器前端（SPA） | Dashboard / 请求列表 / 对话视图（含 Markdown 渲染、Thinking 折叠、Tool 面板） |
+| `web_viewer/static/app.js` | 前端逻辑 | 视图切换、API 调用、Markdown 渲染 |
+| `web_viewer/static/main.css` | 前端样式 | 深色/浅色主题，响应式布局 |
 
 ## 代理透明原则
 
