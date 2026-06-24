@@ -55,7 +55,9 @@ Claude Code ──▶ 代理 (claude_api_proxy.py)
 | `dataset_cleaner.py` | 数据清洗：解压 → SSE 重组 → 去重 → 输出 `dataset.jsonl` |
 | `dataset_archiver.py` | 数据归档：按 `hour_key` 清洗 → 打包 `tar.gz` → 删除已归档记录 |
 | `archive_cron.py` | 定时归档管理：cron 安装/卸载/执行 |
-| `log_viewer.py` | 日志查看器：交互式浏览 SQLite 日志 |
+| `log_viewer.py` | 日志查看器：终端交互式浏览 SQLite 日志 |
+| `web_viewer/api.py` | 浏览器端日志查看器后端 API（推荐，功能更丰富） |
+| `web_viewer/index.html` | 浏览器端日志查看器前端（SPA） |
 | `claude_api_proxy.py.pure_bk` | 代理主程序原始备份（修改前的纯净版本） |
 
 ## 目录结构
@@ -67,8 +69,12 @@ Claude Code ──▶ 代理 (claude_api_proxy.py)
 ├── dataset_cleaner.py               # 数据清洗
 ├── dataset_archiver.py              # 数据归档
 ├── archive_cron.py                  # 定时归档
-├── log_viewer.py                    # 日志查看
-├── prompt-pipeline/                 # 格式转换管线（见下方）
+├── log_viewer.py                    # 日志查看（终端版）
+├── web_viewer/                      # 浏览器端日志查看器（推荐）
+│   ├── api.py                       #   后端 API
+│   ├── index.html                   #   前端 SPA
+│   └── static/                      #   CSS / JS
+├── prompt-pipeline/                 # 格式转换管线（详见 prompt-pipeline/README.md）
 │   ├── code/                        #   转换脚本
 │   ├── data/                        #   数据文件
 │   ├── docs/                        #   分析报告
@@ -114,48 +120,24 @@ Claude Code ──▶ 代理 (claude_api_proxy.py)
 
 ## prompt-pipeline — 格式转换管线
 
-`prompt-pipeline/` 复现了从 Anthropic API 格式到模型实际输入（token ids）的完整转换链路，用于分析每一步的输入输出。
-
-```
-Anthropic 抓包 (data/t.json)
-    │
-    ▼
-convert_to_openai.py     ← 合并 system，转换 tools，过滤 cache_control/thinking
-    │
-    ▼
-OpenAI 格式 (data/openai_converted.json)
-    │
-    ▼
-render_chat_template.py  ← tokenizer.apply_chat_template() → 纯文本 / token ids
-    │
-    ▼
-最终 prompt (28,177 tokens)
-```
-
-详细文档见 `prompt-pipeline/README.md`。
+Anthropic API 格式 → OpenAI 格式 → tokenizer → token ids 的完整转换链路，用于分析每一步的输入输出。详见 `prompt-pipeline/README.md`。
 
 ## 操作指南
 
 ### 查看日志
 
 ```bash
-# 列出所有抓取的请求
-python log_viewer.py
+# 浏览器端查看器（推荐，功能最全）
+python3 web_viewer/api.py --port 8002
+# 打开 http://127.0.0.1:8002/
 
-# 查看最新的一条
-python log_viewer.py --latest
-
-# 查看指定记录
-python log_viewer.py --seq-id 42
-
-# 仅展示摘要（不展开回复内容）
-python log_viewer.py --latest --summary
-
-# 查看原始解压后的 SSE 数据
-python log_viewer.py --latest --raw
-
-# 按日期筛选
-python log_viewer.py --date 2026-06-16 --hour 14
+# 终端查看器
+python log_viewer.py              # 列出请求
+python log_viewer.py --latest     # 最新一条
+python log_viewer.py --seq-id 42  # 指定记录
+python log_viewer.py --latest --summary   # 仅摘要
+python log_viewer.py --latest --raw       # 原始 SSE
+python log_viewer.py --date 2026-06-16 --hour 14  # 按日期筛选
 ```
 
 ### 数据清洗
@@ -180,6 +162,9 @@ python dataset_archiver.py
 # 归档指定时间窗口
 python dataset_archiver.py --date 2026-06-16 --hour 14
 
+# 归档指定时间点以前的所有数据
+python dataset_archiver.py --before 2026-06-20_14
+
 # 归档所有未归档的窗口
 python dataset_archiver.py --archive-all
 
@@ -189,6 +174,15 @@ python dataset_archiver.py --keep-source
 # 预演（不执行）
 python dataset_archiver.py --dry-run
 ```
+
+归档模式对比：
+
+| 参数 | 效果 |
+|------|------|
+| 无参数 | 归档最旧的**一个**未归档窗口 |
+| `--date D --hour H` | 归档指定的**一个**窗口 |
+| `--before D_H` | 归档该时间点以前的**所有**窗口 |
+| `--archive-all` | 归档数据库中**全部**窗口 |
 
 ### 定时归档
 
@@ -220,6 +214,7 @@ python archive_cron.py --remove
 | `KEEP_SOURCE` | `false` | 设为 `1` 归档后保留原始数据 |
 | `RETAIN_DAYS` | `0` | 归档保留天数（0=永久） |
 | `RESPONSE_CHUNK_SIZE` | `65536` | 响应读取块大小（字节） |
+| `CONFIG_PATH` | `config/routes.json` | 路由配置文件路径 |
 
 ## 路由配置
 
@@ -238,12 +233,6 @@ python archive_cron.py --remove
 }
 ```
 
-### 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `CONFIG_PATH` | `config/routes.json` | 配置文件绝对路径 |
-
 ### 说明
 
 - `cookie_file` 支持两种格式：Netscape cookie 格式和 `key=value` 格式（每行一个）
@@ -252,5 +241,10 @@ python archive_cron.py --remove
 
 ## 依赖
 
-- Python 标准库（sqlite3 内置）
+- Python 3.10+
 - `brotli` — 解压 brotli 压缩的响应（`pip install brotli`，非必须，缺失时跳过 brotli 数据）
+- 其余组件仅使用 Python 标准库
+
+```bash
+pip install brotli
+```

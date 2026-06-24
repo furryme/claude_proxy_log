@@ -18,13 +18,13 @@ Claude API 反向代理，新增抓包 + 数据归档功能，用于构建训练
 | `request_logger.py` | 请求/响应缓冲，`finish()` 非阻塞投递 | `RequestLogger.__init__(method, path, body_bytes, upstream_url, model)` / `add_response_chunk(raw_bytes)` / `finish(status, error)` |
 | `log_store.py` | SQLite 存储，后台 writer 线程 | `enqueue_entry(entry_dict)` / `get_connection()` / `DB_PATH` / `_next_seq_id()` / `_make_hour_key(ts)` |
 | `dataset_cleaner.py` | 从 SQLite 读数据 → 解压 body + response → SSE 重组 → 去重 → 输出 dataset.jsonl | `clean_time_window(db_path, hour_key, output_dir)` / `clean_directory(input_dir, output_dir)`（兼容旧调用） |
-| `dataset_archiver.py` | 按 `hour_key` 查询 SQLite → 清洗 → 压缩 tar.gz → `DELETE FROM entries` | `archive_window(date_str, hour_str, dry_run, keep_source, ...)` |
+| `dataset_archiver.py` | 按 `hour_key` 查询 SQLite → 清洗 → 压缩 tar.gz → `DELETE FROM entries` | `archive_window(date_str, hour_str, before, dry_run, keep_source, ...)` |
 | `archive_cron.py` | cron 安装/管理，仅调用 archiver | 不直接交互数据库 |
 | `log_viewer.py` | 交互式查看 SQLite 日志 | `list_requests(db_path, date, hour)` / `view_request(seq_id, ...)` / `get_request(db_path, seq_id)` |
 | `web_viewer/api.py` | 浏览器端日志查看器后端 API | `GET /api/summary`, `GET /api/hours`, `GET /api/requests`, `GET /api/requests/:seq_id` |
 | `web_viewer/index.html` | 浏览器端日志查看器前端（SPA） | Dashboard / 请求列表 / 对话视图（含 Markdown 渲染、Thinking 折叠、Tool 面板） |
 | `web_viewer/static/app.js` | 前端逻辑 | 视图切换、API 调用、Markdown 渲染 |
-| `web_viewer/static/main.css` | 前端样式 | 深色/浅色主题，响应式布局 |
+| `web_viewer/static/main.css` | 前端样式 | 深色/浅色主题（可切换），响应式布局 |
 
 ## 代理透明原则
 
@@ -92,32 +92,14 @@ CREATE INDEX idx_ts ON entries(ts);
 7. **清洗规则**：保留 `POST /v1/messages` + `status=200` + 有意义的 text 或 thinking
 8. **归档文件名**：`dataset_YYYY-MM-DD_HH.tar.gz`，含 `dataset.jsonl`
 9. **VACUUM 策略**：仅删除 >1000 行时执行，避免频繁 VACUUM
-10. **测试代理常驻 8002 端口**
+10. **测试代理常驻 8002 端口**（注意：`web_viewer` 默认也是 8002，启动时指定不同端口避免冲突）
 
-## 已知问题与修复
+## 历史 Bug 记录
 
-### 客户端断开后上游连接泄漏（已修复）
-
-**症状**：客户端超时重试后，vllm-server 上的原始请求仍在持续生成（长达十几分钟）。
-
-**根因**：`forward()` 中 `BrokenPipeError` 被捕获后只调用了 `_finish_log()`，上游 `resp` 连接从未关闭 → vllm-server 不知道客户端已走，keep-alive 连接持续输出 SSE。
-
-**修复**（`claude_api_proxy.py`）：
-- 流式响应 `BrokenPipeError` 分支增加 `resp.close()` — 立即关闭上游 TCP 连接
-- `HTTPError` 分支增加 `e.close()` — 防御性关闭
-- `HTTPError` 回写客户端也加 `BrokenPipeError` 处理
-
-**原理**：`resp.close()` 关闭 TCP 读端，vllm-server 下一次 SSE 输出时写入已关闭连接 → 收到 SIGPIPE/RST → 中止生成。
-
-### writer 线程空转导致 CPU 100%（已修复）
-
-**症状**：代理启动后无流量，CPU 100% 持续。
-
-**根因**：`log_store.py` 的 `_collect_batch()` 用 `queue.get_nowait()` 检查空队列，失败后立即返回，writer 线程 `continue` 重新调用，每秒循环数十万次——纯空转。
-
-**修复**：改为 `queue.get(timeout=2.0)`，队列为空时线程阻塞等待 2 秒，`put()` 到来时自动唤醒。无流量时 writer 线程零 CPU。
-
-**注意**：生产进程重启后生效。不要随意 kill 生产进程——用独立端口（8003）做测试验证。
+详见 [[docs/bugs.md]] — 包含连接泄漏和 CPU 空转的根因分析。关键教训：
+- 客户端断开时**必须关闭上游连接**（`resp.close()`），否则 vllm-server 持续生成
+- 后台线程**禁止无超时空转**，用 `queue.get(timeout=N)` 阻塞等待
+- 不要 kill 生产进程，用独立端口测试
 
 ## 清洗后数据格式（dataset.jsonl 每行）
 

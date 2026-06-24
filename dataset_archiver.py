@@ -9,6 +9,7 @@ Usage:
     python dataset_archiver.py --dry-run
     python dataset_archiver.py --keep-source
     python dataset_archiver.py --archive-all
+    python dataset_archiver.py --before 2026-06-20_14    # archive everything before this hour
 """
 
 from __future__ import annotations
@@ -143,6 +144,7 @@ def archive_window(
     keep_source: bool = False,
     archive_oldest: bool = True,
     retain_days: int = 0,
+    before: str | None = None,
 ):
     windows = _find_time_windows()
     if not windows:
@@ -151,6 +153,11 @@ def archive_window(
 
     if date_str and hour_str:
         targets = [f"{date_str}_{hour_str}"]
+    elif before:
+        targets = [w for w in windows if w < before]
+        if not targets:
+            print(f"[archiver] No windows before {before}", file=sys.stderr)
+            return
     elif archive_oldest:
         targets = [w for w in windows if not _is_already_archived(w)]
         if not targets:
@@ -192,6 +199,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-source", action="store_true")
     parser.add_argument("--archive-all", action="store_true")
+    parser.add_argument("--before", help="Archive all windows before this hour_key (e.g. 2026-06-20_14)")
     parser.add_argument("--retain-days", type=int, default=0)
     args = parser.parse_args()
 
@@ -200,7 +208,8 @@ def main():
 
     archive_window(
         date_str=args.date, hour_str=args.hour, dry_run=args.dry_run,
-        keep_source=keep_source, archive_oldest=not args.archive_all, retain_days=retain_days,
+        keep_source=keep_source, archive_oldest=not args.archive_all and not args.before,
+        retain_days=retain_days, before=args.before,
     )
 
 

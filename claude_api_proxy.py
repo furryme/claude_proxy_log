@@ -244,6 +244,7 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
             resp.close()
             _finish_log(status=resp.status, error="broken_pipe")
 
+        resp.close()  # explicitly free upstream connection
         _finish_log(status=resp.status)
 
     except urllib.error.HTTPError as e:
