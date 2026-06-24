@@ -88,7 +88,7 @@ def _load_routes_config() -> tuple[dict, str]:
     default_upstream = data.pop("__default_upstream__", "http://localhost:8000")
     routes: dict[str, dict | str] = data
 
-    # 验证格式
+    # 验证格式（合法 dict keys: url, cookie_file, api_key）
     for model, entry in routes.items():
         if isinstance(entry, str):
             # 简单字符串 = 纯 URL
@@ -107,15 +107,20 @@ def _load_routes_config() -> tuple[dict, str]:
 ROUTES, DEFAULT_UPSTREAM = _load_routes_config()
 
 
-def _resolve_route(model: str) -> tuple[str, str | None]:
-    """返回 (upstream_url, cookie_header_or_None)"""
+def _resolve_route(model: str) -> tuple[str, str | None, str | None]:
+    """返回 (upstream_url, cookie_header_or_None, api_key_or_None)
+
+    api_key 值若以 '$' 开头（如 '$ANTHROPIC_AUTH_TOKEN'），则从环境变量读取。
+    """
     entry = ROUTES.get(model)
     if isinstance(entry, dict):
         url = entry["url"]
         cookie_file = entry.get("cookie_file")
+        api_key = entry.get("api_key")
     else:
         url = entry
         cookie_file = None
+        api_key = None
 
     cookie_header = None
     if cookie_file and os.path.isfile(cookie_file):
@@ -141,7 +146,17 @@ def _resolve_route(model: str) -> tuple[str, str | None]:
             _COOKIE_CACHE[cookie_file] = "; ".join(cookies) if cookies else ""
         cookie_header = _COOKIE_CACHE[cookie_file]
 
-    return url, cookie_header
+    # Resolve api_key: "$ENV_VAR" -> os.environ["ENV_VAR"]
+    if api_key and isinstance(api_key, str) and api_key.startswith("$"):
+        env_var = api_key[1:]
+        env_val = os.environ.get(env_var)
+        if env_val:
+            api_key = env_val
+        else:
+            print(f"  [warning] api_key references env var {env_var!r} which is not set", file=sys.stderr)
+            api_key = None
+
+    return url, cookie_header, api_key
 
 
 def forward(request: http.server.BaseHTTPRequestHandler) -> None:
@@ -171,7 +186,7 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
         except json.JSONDecodeError:
             print(f"  body not JSON, {len(body)} bytes", file=sys.stderr)
 
-    upstream, cookie_header = _resolve_route(model) if model else (DEFAULT_UPSTREAM, None)
+    upstream, cookie_header, api_key = _resolve_route(model) if model else (DEFAULT_UPSTREAM, None, None)
     if not upstream:
         upstream = DEFAULT_UPSTREAM
     target = upstream.rstrip("/") + path
@@ -180,11 +195,16 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
     if cookie_header:
         headers["Cookie"] = cookie_header
 
+    # Inject api_key as Authorization: Bearer ... if configured
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     cookie_info = ""
     if cookie_header:
         cookie_keys = [c.split("=")[0] for c in cookie_header.split("; ")]
         cookie_info = f" (cookie={len(cookie_keys)} keys)"
-    print(f"  model={model!r}  ->  {method} {path}  ->  {target}{cookie_info}", file=sys.stderr)
+    api_info = " (api_key)" if api_key else ""
+    print(f"  model={model!r}  ->  {method} {path}  ->  {target}{cookie_info}{api_info}", file=sys.stderr)
 
     # ── Start logging ──────────────────────────────────────
     logger = None
