@@ -20,6 +20,7 @@ const state = {
   toolsVisible: false,
   searchQuery: "",
   searchScope: "all",
+  _searchDate: null,
 };
 
 // ── DOM refs ────────────────────────────────────────
@@ -394,10 +395,7 @@ async function showSearch(q) {
       state._searchDate = hourKey.split("_")[0]; // for breadcrumb
     }
 
-    console.log("[search] params:", params, "url:", `/api/search?${new URLSearchParams(params)}`);
     const data = await api("/api/search", params);
-    console.log("[search] result:", data);
-    state.searchTotal = data.total;
 
     $("#listInfo").innerHTML = `Search «${escHtml(q)}» — <strong>${data.total}</strong> matches ` +
       `<button class="btn btn-sm" onclick="showDashboard();return false" style="margin-left:12px">✕ clear</button>`;

@@ -136,7 +136,6 @@ def parse_non_streaming(text: str) -> dict:
         elif cb.get("type") == "thinking":
             thinkings.append(cb.get("thinking", ""))
         elif cb.get("type") == "tool_use":
-            cb = cb
             texts.append(f"\n\n{cb.get('name', 'tool')}[id:{cb.get('id', '?')}]\n{json.dumps(cb.get('input', {}), ensure_ascii=False)}\n[tool_use]\n\n")
 
     return {
@@ -419,12 +418,10 @@ class Handler(BaseHTTPRequestHandler):
 
         conditions = []
         binds = []
-        if hour_key:
-            conditions.append("hour_key = ?")
-            binds.append(hour_key)
-        elif date:
-            conditions.append("hour_key LIKE ?")
-            binds.append(f"{date}_%")
+        time_cond, time_binds = _build_time_clause(hour_key, date)
+        if time_cond:
+            conditions.append(time_cond.lstrip("AND ").strip())
+            binds.extend(time_binds)
         if model:
             conditions.append("model = ?")
             binds.append(model)
@@ -586,24 +583,10 @@ class Handler(BaseHTTPRequestHandler):
         limit = min(int(params.get("limit", ["30"])[0]), 100)
         offset = (page - 1) * limit
 
-        # Build time-filter: hour_key (single hour) or date (up to 24 hours)
-        time_cond = ""
-        time_binds = []
-        if hour_key:
-            time_cond = "AND hour_key = ?"
-            time_binds.append(hour_key)
-        elif date:
-            time_cond = "AND hour_key LIKE ?"
-            time_binds.append(f"{date}_%")
-        else:
-            # No time scope — default to last 24 hours
-            cutoff = time.time() - 86400
-            time_cond = "AND ts >= ?"
-            time_binds.append(cutoff)
+        time_cond, time_binds = _build_time_clause(hour_key, date)
 
         conn = get_connection()
         try:
-            # Fetch candidates: only successful POST /v1/messages, with body+response
             rows = conn.execute(
                 "SELECT seq_id, ts, model, status, duration_ms, body_len, COALESCE(length(response),0) as resp_size, body, response "
                 "FROM entries WHERE status = 200 AND method = 'POST' AND path LIKE '%/v1/messages%' "
@@ -613,44 +596,39 @@ class Handler(BaseHTTPRequestHandler):
 
             q_lower = q.lower()
             matches = []
-            SNIPPET_CTX = 80  # characters around the match
 
             for r in rows:
                 seq_id, ts = r[0], r[1]
                 dt = datetime.fromtimestamp(ts)
+                item = {
+                    "seq_id": seq_id,
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "time": dt.strftime("%H:%M:%S"),
+                    "model": r[2], "status": r[3], "duration_ms": r[4],
+                    "body_len": r[5], "resp_size": r[6],
+                }
 
                 if scope in ("all", "body"):
                     body_str = decompress_body(r[7] or b"")
                     body_lower = body_str.lower()
                     if q_lower in body_lower:
                         idx = body_lower.index(q_lower)
-                        snippet = body_str[max(0, idx - SNIPPET_CTX):idx + len(q) + SNIPPET_CTX]
-                        matches.append({
-                            "seq_id": seq_id,
-                            "date": dt.strftime("%Y-%m-%d"),
-                            "time": dt.strftime("%H:%M:%S"),
-                            "model": r[2], "status": r[3], "duration_ms": r[4],
-                            "body_len": r[5], "resp_size": r[6],
-                            "scope": "body", "snippet": self._esc(snippet),
-                        })
-                        continue  # one match per request
+                        snippet = body_str[max(0, idx - 80):idx + len(q) + 80]
+                        item["scope"] = "body"
+                        item["snippet"] = self._esc(snippet)
+                        matches.append(item)
+                        continue
 
                 if scope in ("all", "response"):
                     resp_str = decompress_response(r[8] or b"")
-                    if q_lower in resp_str.lower():
-                        r_lower = resp_str.lower()
-                        idx = r_lower.index(q_lower)
-                        snippet = resp_str[max(0, idx - SNIPPET_CTX):idx + len(q) + SNIPPET_CTX]
-                        matches.append({
-                            "seq_id": seq_id,
-                            "date": dt.strftime("%Y-%m-%d"),
-                            "time": dt.strftime("%H:%M:%S"),
-                            "model": r[2], "status": r[3], "duration_ms": r[4],
-                            "body_len": r[5], "resp_size": r[6],
-                            "scope": "response", "snippet": self._esc(snippet),
-                        })
+                    resp_lower = resp_str.lower()
+                    if q_lower in resp_lower:
+                        idx = resp_lower.index(q_lower)
+                        snippet = resp_str[max(0, idx - 80):idx + len(q) + 80]
+                        item["scope"] = "response"
+                        item["snippet"] = self._esc(snippet)
+                        matches.append(item)
 
-            # Paginate
             total = len(matches)
             paged = matches[offset:offset + limit]
         finally:
@@ -662,6 +640,18 @@ class Handler(BaseHTTPRequestHandler):
     def _esc(s: str) -> str:
         """Minimal escape for snippet — flatten control chars, cap length."""
         return s.replace("\t", " ").replace("\r", " ").replace("\n", " ")[:300]
+
+
+def _build_time_clause(hour_key, date):
+    """Return (SQL clause, bind_args) for time filtering."""
+    if hour_key:
+        return "AND hour_key = ?", (hour_key,)
+    elif date:
+        return "AND hour_key LIKE ?", (f"{date}_%",)
+    else:
+        # Default to last 24 hours
+        cutoff = time.time() - 86400
+        return "AND ts >= ?", (cutoff,)
 
 
 def _trim_request(openai_req: dict) -> dict:
