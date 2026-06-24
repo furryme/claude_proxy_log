@@ -161,9 +161,7 @@ def convert_anthropic_to_openai(body_dict: dict) -> dict:
         elif isinstance(system, list):
             for block in system:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    t = block.get("text", "")
-                    if not t.startswith("x-anthropic-billing-header"):
-                        system_parts.append(t)
+                    system_parts.append(block.get("text", ""))
 
     # messages
     for msg in body_dict.get("messages", []):
