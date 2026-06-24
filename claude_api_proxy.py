@@ -88,7 +88,7 @@ def _load_routes_config() -> tuple[dict, str]:
     default_upstream = data.pop("__default_upstream__", "http://localhost:8000")
     routes: dict[str, dict | str] = data
 
-    # 验证格式（合法 dict keys: url, cookie_file, api_key）
+    # 验证格式 + 解析 api_key 中的 $ENV_VAR 引用（一次性完成，不放在请求热路径上）
     for model, entry in routes.items():
         if isinstance(entry, str):
             # 简单字符串 = 纯 URL
@@ -97,6 +97,14 @@ def _load_routes_config() -> tuple[dict, str]:
             if "url" not in entry:
                 print(f"  [error] route {model!r} missing 'url' key", file=sys.stderr)
                 sys.exit(1)
+            raw_key = entry.get("api_key")
+            if isinstance(raw_key, str) and raw_key.startswith("$"):
+                env_var = raw_key[1:]
+                env_val = os.environ.get(env_var)
+                if env_val:
+                    entry["api_key"] = env_val
+                else:
+                    print(f"  [warning] route {model!r}: api_key references env var {env_var!r} which is not set", file=sys.stderr)
             continue
         print(f"  [error] route {model!r} must be string or object with 'url'", file=sys.stderr)
         sys.exit(1)
@@ -107,12 +115,16 @@ def _load_routes_config() -> tuple[dict, str]:
 ROUTES, DEFAULT_UPSTREAM = _load_routes_config()
 
 
-def _resolve_route(model: str) -> tuple[str, str | None, str | None]:
+def _resolve_route(model: str | None) -> tuple[str, str | None, str | None]:
     """返回 (upstream_url, cookie_header_or_None, api_key_or_None)
 
-    api_key 值若以 '$' 开头（如 '$ANTHROPIC_AUTH_TOKEN'），则从环境变量读取。
+    model 为 None 或不在 ROUTES 中时返回 DEFAULT_UPSTREAM。
+    api_key 已在 _load_routes_config() 中解析完毕，此处直接读取。
     """
-    entry = ROUTES.get(model)
+    entry = ROUTES.get(model) if model else None
+    if entry is None:
+        return DEFAULT_UPSTREAM, None, None
+
     if isinstance(entry, dict):
         url = entry["url"]
         cookie_file = entry.get("cookie_file")
@@ -146,16 +158,6 @@ def _resolve_route(model: str) -> tuple[str, str | None, str | None]:
             _COOKIE_CACHE[cookie_file] = "; ".join(cookies) if cookies else ""
         cookie_header = _COOKIE_CACHE[cookie_file]
 
-    # Resolve api_key: "$ENV_VAR" -> os.environ["ENV_VAR"]
-    if api_key and isinstance(api_key, str) and api_key.startswith("$"):
-        env_var = api_key[1:]
-        env_val = os.environ.get(env_var)
-        if env_val:
-            api_key = env_val
-        else:
-            print(f"  [warning] api_key references env var {env_var!r} which is not set", file=sys.stderr)
-            api_key = None
-
     return url, cookie_header, api_key
 
 
@@ -186,9 +188,7 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
         except json.JSONDecodeError:
             print(f"  body not JSON, {len(body)} bytes", file=sys.stderr)
 
-    upstream, cookie_header, api_key = _resolve_route(model) if model else (DEFAULT_UPSTREAM, None, None)
-    if not upstream:
-        upstream = DEFAULT_UPSTREAM
+    upstream, cookie_header, api_key = _resolve_route(model)
     target = upstream.rstrip("/") + path
 
     # Inject cookie header if configured

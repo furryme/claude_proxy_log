@@ -62,18 +62,6 @@ def _next_seq_id() -> int:
         return _seq_counter
 
 
-def _init_seq_counter():
-    """Read MAX(seq_id) from DB so we don't collide with existing records."""
-    global _seq_counter
-    try:
-        conn = sqlite3.connect(str(DB_PATH), timeout=10)
-        row = conn.execute("SELECT COALESCE(MAX(seq_id), 0) FROM entries").fetchone()
-        conn.close()
-        _seq_counter = row[0]
-    except Exception:
-        _seq_counter = 0
-
-
 def _make_hour_key(ts: float) -> str:
     dt = datetime.fromtimestamp(ts)
     return dt.strftime("%Y-%m-%d_%H")
@@ -111,9 +99,15 @@ def _init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hour ON entries(hour_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON entries(ts)")
     conn.commit()
-    conn.close()
 
-    _init_seq_counter()
+    # Initialize seq counter from DB to avoid collision with existing records
+    global _seq_counter
+    try:
+        _seq_counter = conn.execute("SELECT COALESCE(MAX(seq_id), 0) FROM entries").fetchone()[0]
+    except sqlite3.OperationalError:
+        _seq_counter = 0
+
+    conn.close()
 
     _queue = queue.Queue(maxsize=1000)
 
