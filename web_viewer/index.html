@@ -53,7 +53,12 @@
       <div class="breadcrumb" id="breadcrumb">Dashboard</div>
       <div class="header-actions">
         <div class="search-box">
-          <input type="text" id="searchInput" placeholder="Search by seq_id...">
+          <input type="text" id="searchInput" placeholder="Search keywords..." autocomplete="off">
+          <select id="searchScope" title="Search scope">
+            <option value="all">All</option>
+            <option value="body">Body</option>
+            <option value="response">Response</option>
+          </select>
         </div>
       </div>
     </div>
@@ -76,7 +81,7 @@
         </div>
         <table class="requests-table" id="requestsTable">
           <thead>
-            <tr>
+            <tr id="requestListHeader">
               <th>Seq</th>
               <th>Time</th>
               <th>Model</th>
@@ -85,6 +90,13 @@
               <th>Body</th>
               <th>Response</th>
               <th>Messages</th>
+            </tr>
+            <tr id="searchListHeader" class="hidden">
+              <th>Seq</th>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Scope</th>
+              <th>Snippet</th>
             </tr>
           </thead>
           <tbody id="requestsBody"></tbody>

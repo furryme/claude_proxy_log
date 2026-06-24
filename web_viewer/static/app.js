@@ -6,7 +6,7 @@ const API = "";  // same origin
 
 // ── State ───────────────────────────────────────────
 const state = {
-  view: "dashboard",         // dashboard | list | chat
+  view: "dashboard",         // dashboard | list | search | chat
   hours: [],
   models: [],
   summary: null,
@@ -18,6 +18,8 @@ const state = {
   chatData: null,
   systemVisible: false,
   toolsVisible: false,
+  searchQuery: "",
+  searchScope: "all",
 };
 
 // ── DOM refs ────────────────────────────────────────
@@ -141,12 +143,28 @@ async function api(path, params = {}) {
 function showView(name) {
   state.view = name;
   $("#dashboardView").classList.toggle("hidden", name !== "dashboard");
-  $("#requestListView").classList.toggle("hidden", name !== "list");
+  $("#requestListView").classList.toggle("hidden", !["list", "search"].includes(name));
   $("#chatView").classList.toggle("hidden", name !== "chat");
+
+  // Toggle table headers based on view mode
+  const listHeader = $("#requestListHeader");
+  const searchHeader = $("#searchListHeader");
+  if (name === "search") {
+    listHeader.classList.add("hidden");
+    searchHeader.classList.remove("hidden");
+  } else {
+    listHeader.classList.remove("hidden");
+    searchHeader.classList.add("hidden");
+  }
 
   const bc = $("#breadcrumb");
   if (name === "dashboard") bc.innerHTML = "Dashboard";
   else if (name === "list") bc.innerHTML = `<a href="#" onclick="showDashboard();return false">Dashboard</a> / <strong>${escHtml(state.currentHour || "All Requests")}</strong>`;
+  else if (name === "search") {
+    const scopeLabel = state.searchScope === "all" ? "all" : state.searchScope;
+    const timeLabel = state.currentHour || (state._searchDate ? state._searchDate : "last 24h");
+    bc.innerHTML = `<a href="#" onclick="showDashboard();return false">Dashboard</a> / <strong>Search «${escHtml(state.searchQuery)}»</strong> — ${timeLabel}, ${scopeLabel}`;
+  }
   else if (name === "chat") bc.innerHTML = `<a href="#" onclick="showDashboard();return false">Dashboard</a> / <a href="#" onclick="showList();return false">${escHtml(state.currentHour || "Requests")}</a> / <strong>Seq #${state.currentSeqId}</strong>`;
 }
 
@@ -287,7 +305,7 @@ async function loadRequestPage() {
       const mc = item.msg_count || 0;
       return `<tr onclick="viewRequest(${item.seq_id})">
         <td><span class="seq-link">${item.seq_id}</span></td>
-        <td>${item.time}</td>
+        <td class="datetime-cell">${item.date ? item.date + " " + item.time : item.time}</td>
         <td>${escHtml(item.model)}</td>
         <td><span class="status-badge ${statusClass}">${item.status || "-"}</span></td>
         <td>${fmtDuration(item.duration_ms)}</td>
@@ -336,6 +354,76 @@ function goPage(p) {
   if (p < 1 || p > state.totalPages) return;
   state.currentPage = p;
   loadRequestPage();
+}
+
+// ── Keyword Search ──────────────────────────────────
+function highlightMatch(snippet, q) {
+  if (!q || !snippet) return escHtml(snippet);
+  const escaped = escHtml(snippet);
+  const eq = escHtml(q);
+  const regex = new RegExp(eq.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "gi");
+  return escaped.replace(regex, '<mark>$&</mark>');
+}
+
+async function showSearch(q) {
+  state.searchQuery = q;
+  state.searchScope = $("#searchScope").value;
+  state.currentPage = 1;
+
+  // Determine time scope: current hour > current date > last 24h (backend default)
+  let hourKey = null;
+  if (state.currentHour) {
+    // Already in a specific hour — search that hour
+    hourKey = state.currentHour;
+  }
+
+  showView("search");
+
+  const tbody = $("#requestsBody");
+  tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div>Searching...</div></td></tr>';
+
+  try {
+    const params = {
+      q,
+      scope: state.searchScope,
+      page: 1,
+      limit: 50,
+    };
+    if (hourKey) {
+      params.hour_key = hourKey;
+      state._searchDate = hourKey.split("_")[0]; // for breadcrumb
+    }
+
+    console.log("[search] params:", params, "url:", `/api/search?${new URLSearchParams(params)}`);
+    const data = await api("/api/search", params);
+    console.log("[search] result:", data);
+    state.searchTotal = data.total;
+
+    $("#listInfo").innerHTML = `Search «${escHtml(q)}» — <strong>${data.total}</strong> matches ` +
+      `<button class="btn btn-sm" onclick="showDashboard();return false" style="margin-left:12px">✕ clear</button>`;
+
+    if (!data.items.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted)">No matches found</td></tr>';
+      $("#pagination").innerHTML = "";
+      return;
+    }
+
+    tbody.innerHTML = data.items.map(item => {
+      const scopeBadge = item.scope === "body" ? 'style="color:var(--purple)"' : 'style="color:var(--cyan)"';
+      return `<tr onclick="viewRequest(${item.seq_id})">
+        <td><span class="seq-link">${item.seq_id}</span></td>
+        <td class="datetime-cell">${item.date} ${item.time}</td>
+        <td>${escHtml(item.model)}</td>
+        <td><span class="scope-badge" ${scopeBadge}>${item.scope}</span></td>
+        <td class="snippet-cell">${highlightMatch(item.snippet, q)}</td>
+      </tr>`;
+    }).join("");
+
+    $("#pagination").innerHTML = ""; // single-page for search results
+
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="error-message"><h3>Error</h3><p>${escHtml(e.message)}</p></div></td></tr>`;
+  }
 }
 
 // ── Chat Detail ─────────────────────────────────────
@@ -591,13 +679,13 @@ function init() {
     loadRequestPage();
   });
 
-  // Search by seq_id
+  // Keyword search
   let searchTimer;
   $("#searchInput").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
     const val = e.target.value.trim();
-    if (/^\d+$/.test(val)) {
-      searchTimer = setTimeout(() => viewRequest(parseInt(val)), 300);
+    if (val.length >= 2) {
+      searchTimer = setTimeout(() => showSearch(val), 300);
     }
   });
 
@@ -605,7 +693,13 @@ function init() {
     if (e.key === "Enter") {
       clearTimeout(searchTimer);
       const val = e.target.value.trim();
-      if (/^\d+$/.test(val)) viewRequest(parseInt(val));
+      if (val.length >= 1) showSearch(val);
+    }
+  });
+
+  $("#searchScope").addEventListener("change", () => {
+    if (state.view === "search" && state.searchQuery) {
+      showSearch(state.searchQuery);
     }
   });
 

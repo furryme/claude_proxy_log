@@ -576,36 +576,92 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_search(self, params):
         q = params.get("q", [""])[0].strip()
         if not q:
-            self._json_response({"items": []})
+            self._json_response({"items": [], "total": 0})
             return
+
+        scope = params.get("scope", ["all"])[0]  # all | body | response
+        hour_key = params.get("hour_key", [None])[0]
+        date = params.get("date", [None])[0]
         page = int(params.get("page", ["1"])[0])
         limit = min(int(params.get("limit", ["30"])[0]), 100)
         offset = (page - 1) * limit
 
+        # Build time-filter: hour_key (single hour) or date (up to 24 hours)
+        time_cond = ""
+        time_binds = []
+        if hour_key:
+            time_cond = "AND hour_key = ?"
+            time_binds.append(hour_key)
+        elif date:
+            time_cond = "AND hour_key LIKE ?"
+            time_binds.append(f"{date}_%")
+        else:
+            # No time scope — default to last 24 hours
+            cutoff = time.time() - 86400
+            time_cond = "AND ts >= ?"
+            time_binds.append(cutoff)
+
         conn = get_connection()
         try:
-            # Search in body text
+            # Fetch candidates: only successful POST /v1/messages, with body+response
             rows = conn.execute(
-                "SELECT seq_id, ts, model, status, duration_ms, body_len, COALESCE(length(response),0) as resp_size "
-                "FROM entries ORDER BY ts DESC LIMIT ? OFFSET ?",
-                (limit, offset)
+                "SELECT seq_id, ts, model, status, duration_ms, body_len, COALESCE(length(response),0) as resp_size, body, response "
+                "FROM entries WHERE status = 200 AND method = 'POST' AND path LIKE '%/v1/messages%' "
+                f"{time_cond} ORDER BY ts DESC",
+                time_binds,
             ).fetchall()
 
-            items = []
+            q_lower = q.lower()
+            matches = []
+            SNIPPET_CTX = 80  # characters around the match
+
             for r in rows:
-                seq_id = r[0]
-                body = decompress_body(conn.execute("SELECT body FROM entries WHERE seq_id=?", (seq_id,)).fetchone()[0])
-                if q.lower() in body.lower():
-                    ts = datetime.fromtimestamp(r[1]).strftime("%H:%M:%S")
-                    items.append({
-                        "seq_id": seq_id, "time": ts, "model": r[2],
-                        "status": r[3], "duration_ms": r[4],
-                        "body_len": r[5], "resp_size": r[6],
-                    })
+                seq_id, ts = r[0], r[1]
+                dt = datetime.fromtimestamp(ts)
+
+                if scope in ("all", "body"):
+                    body_str = decompress_body(r[7] or b"")
+                    body_lower = body_str.lower()
+                    if q_lower in body_lower:
+                        idx = body_lower.index(q_lower)
+                        snippet = body_str[max(0, idx - SNIPPET_CTX):idx + len(q) + SNIPPET_CTX]
+                        matches.append({
+                            "seq_id": seq_id,
+                            "date": dt.strftime("%Y-%m-%d"),
+                            "time": dt.strftime("%H:%M:%S"),
+                            "model": r[2], "status": r[3], "duration_ms": r[4],
+                            "body_len": r[5], "resp_size": r[6],
+                            "scope": "body", "snippet": self._esc(snippet),
+                        })
+                        continue  # one match per request
+
+                if scope in ("all", "response"):
+                    resp_str = decompress_response(r[8] or b"")
+                    if q_lower in resp_str.lower():
+                        r_lower = resp_str.lower()
+                        idx = r_lower.index(q_lower)
+                        snippet = resp_str[max(0, idx - SNIPPET_CTX):idx + len(q) + SNIPPET_CTX]
+                        matches.append({
+                            "seq_id": seq_id,
+                            "date": dt.strftime("%Y-%m-%d"),
+                            "time": dt.strftime("%H:%M:%S"),
+                            "model": r[2], "status": r[3], "duration_ms": r[4],
+                            "body_len": r[5], "resp_size": r[6],
+                            "scope": "response", "snippet": self._esc(snippet),
+                        })
+
+            # Paginate
+            total = len(matches)
+            paged = matches[offset:offset + limit]
         finally:
             conn.close()
 
-        self._json_response({"items": items[:20]})
+        self._json_response({"items": paged, "total": total})
+
+    @staticmethod
+    def _esc(s: str) -> str:
+        """Minimal escape for snippet — flatten control chars, cap length."""
+        return s.replace("\t", " ").replace("\r", " ").replace("\n", " ")[:300]
 
 
 def _trim_request(openai_req: dict) -> dict:

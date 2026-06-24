@@ -310,6 +310,11 @@ body {
   align-items: center;
 }
 
+.search-box {
+  display: flex;
+  gap: 4px;
+}
+
 .search-box input {
   padding: 6px 12px;
   background: var(--bg);
@@ -321,6 +326,48 @@ body {
   outline: none;
 }
 .search-box input:focus { border-color: var(--accent); }
+
+.search-box select {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+}
+.search-box select:focus { border-color: var(--accent); }
+
+/* ── Search result styles ───────────────────────────
+ */
+.snippet-cell {
+  max-width: 500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.scope-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+td mark {
+  background: rgba(210, 153, 34, 0.35);
+  color: var(--text);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+[data-theme="light"] td mark {
+  background: rgba(210, 153, 34, 0.5);
+}
 
 /* ── View Area ──────────────────────────────────── */
 .view-area {
@@ -477,6 +524,12 @@ body {
 .seq-link {
   color: var(--accent);
   font-family: var(--font-mono);
+}
+
+.datetime-cell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .status-badge {
