@@ -620,14 +620,20 @@ class Handler(BaseHTTPRequestHandler):
                         continue
 
                 if scope in ("all", "response"):
-                    resp_str = decompress_response(r[8] or b"")
-                    resp_lower = resp_str.lower()
-                    if q_lower in resp_lower:
-                        idx = resp_lower.index(q_lower)
-                        snippet = resp_str[max(0, idx - 80):idx + len(q) + 80]
-                        item["scope"] = "response"
-                        item["snippet"] = self._esc(snippet)
-                        matches.append(item)
+                    resp_raw = decompress_response(r[8] or b"")
+                    # Parse SSE to get the reconstructed text — raw SSE fragments
+                    # won't match multi-word queries split across frames
+                    parsed = reconstruct_sse(resp_raw)
+                    if parsed is None:
+                        parsed = parse_non_streaming(resp_raw)
+                    if parsed:
+                        full_text = (parsed.get("text") or "") + " " + (parsed.get("thinking") or "")
+                        if q_lower in full_text.lower():
+                            idx = full_text.lower().index(q_lower)
+                            snippet = full_text[max(0, idx - 80):idx + len(q) + 80]
+                            item["scope"] = "response"
+                            item["snippet"] = self._esc(snippet)
+                            matches.append(item)
 
             total = len(matches)
             paged = matches[offset:offset + limit]
