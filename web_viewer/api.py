@@ -68,7 +68,8 @@ def reconstruct_sse(text: str) -> dict:
     text_parts, thinking_parts = [], []
     usage = {}
     stop_reason = None
-    tool_use_results = []
+    tool_use_blocks = {}
+    tool_use_order = []
 
     for frame in text.split("\n\n"):
         frame = frame.strip()
@@ -95,7 +96,15 @@ def reconstruct_sse(text: str) -> dict:
                 elif cb_type == "thinking" and cb.get("thinking"):
                     thinking_parts.append(cb["thinking"])
                 elif cb_type == "tool_use":
-                    text_parts.append(f"\n\n{cb.get('name', 'tool')}[id:{cb.get('id', '?')}]\n{json.dumps(cb.get('input', {}), ensure_ascii=False)}\n[{cb_type}]\n\n")
+                    idx = obj.get("index", len(tool_use_blocks))  # index is at obj level, not in content_block
+                    cb_input = cb.get("input") or {}
+                    # input may be complete (non-streaming) or empty {} (streaming, comes in input_json_delta)
+                    tool_use_blocks[idx] = {
+                        "id": cb.get("id", ""),
+                        "name": cb.get("name", ""),
+                        "input_raw": json.dumps(cb_input, ensure_ascii=False) if cb_input else ""
+                    }
+                    tool_use_order.append(idx)
             elif t == "content_block_delta":
                 delta = obj.get("delta", {})
                 d_type = delta.get("type", "")
@@ -103,16 +112,25 @@ def reconstruct_sse(text: str) -> dict:
                     text_parts.append(delta["text"])
                 elif d_type == "thinking_delta" and delta.get("thinking"):
                     thinking_parts.append(delta["thinking"])
+                elif d_type == "input_json_delta":
+                    idx = obj.get("index", len(tool_use_blocks))  # index is at obj level, not delta
+                    if idx not in tool_use_blocks:
+                        tool_use_blocks[idx] = {"id": "", "name": "", "input_raw": ""}
+                        tool_use_order.append(idx)
+                    tool_use_blocks[idx]["input_raw"] += delta.get("partial_json", "")
             elif t == "message_delta":
                 if obj.get("usage"):
                     usage.update(obj["usage"])
                 delta = obj.get("delta", {})
                 stop_reason = delta.get("stop_reason", stop_reason)
 
+    tool_use_result = [tool_use_blocks[i] for i in tool_use_order if i in tool_use_blocks]
+
     return {
         "is_streaming": True,
         "text": "".join(text_parts),
         "thinking": "".join(thinking_parts),
+        "tool_use": tool_use_result,
         "usage": usage,
         "stop_reason": stop_reason,
     }
@@ -123,11 +141,12 @@ def parse_non_streaming(text: str) -> dict:
     try:
         obj = json.loads(text)
     except json.JSONDecodeError:
-        return {"is_streaming": False, "text": text[:500], "thinking": ""}
+        return {"is_streaming": False, "text": text[:500], "thinking": "", "tool_use": []}
 
     content = obj.get("content", [])
     texts = []
     thinkings = []
+    tools = []
     for cb in content:
         if not isinstance(cb, dict):
             continue
@@ -136,12 +155,17 @@ def parse_non_streaming(text: str) -> dict:
         elif cb.get("type") == "thinking":
             thinkings.append(cb.get("thinking", ""))
         elif cb.get("type") == "tool_use":
-            texts.append(f"\n\n{cb.get('name', 'tool')}[id:{cb.get('id', '?')}]\n{json.dumps(cb.get('input', {}), ensure_ascii=False)}\n[tool_use]\n\n")
+            tools.append({
+                "id": cb.get("id", ""),
+                "name": cb.get("name", ""),
+                "input_json": json.dumps(cb.get("input", {}), ensure_ascii=False)
+            })
 
     return {
         "is_streaming": False,
         "text": "".join(texts),
         "thinking": "".join(thinkings),
+        "tool_use": tools,
         "usage": obj.get("usage", {}),
         "stop_reason": obj.get("stop_reason"),
     }

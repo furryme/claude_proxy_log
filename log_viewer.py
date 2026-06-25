@@ -82,6 +82,9 @@ def _reconstruct_response(response_bytes: bytes) -> dict:
     if is_streaming:
         result["is_streaming"] = True
         text_parts, thinking_parts = [], []
+        # Accumulate tool_use blocks: index → {id, name, input_json}
+        tool_use_blocks = {}
+        tool_use_order = []
         usage, stop_reason = {}, None
         for frame in text.split("\n\n"):
             obj = _parse_sse_data(frame.strip())
@@ -91,14 +94,33 @@ def _reconstruct_response(response_bytes: bytes) -> dict:
                 cb = obj.get("content_block", {})
                 if cb.get("type") == "text" and cb.get("text"): text_parts.append(cb["text"])
                 if cb.get("type") == "thinking" and cb.get("thinking"): thinking_parts.append(cb["thinking"])
+                if cb.get("type") == "tool_use":
+                    idx = obj.get("index", len(tool_use_blocks))  # index at obj level
+                    entry = {
+                        "id": cb.get("id", ""),
+                        "name": cb.get("name", ""),
+                        "input_json": cb.get("input", "")
+                    }
+                    tool_use_blocks[idx] = entry
+                    tool_use_order.append(idx)
             elif t == "content_block_delta":
                 delta = obj.get("delta", {})
                 if delta.get("type") == "text_delta" and delta.get("text"): text_parts.append(delta["text"])
                 elif delta.get("type") == "thinking_delta" and delta.get("thinking"): thinking_parts.append(delta["thinking"])
+                elif delta.get("type") == "input_json_delta":
+                    idx = obj.get("index", len(tool_use_blocks))  # index at obj level
+                    if idx not in tool_use_blocks:
+                        tool_use_blocks[idx] = {"id": "", "name": "", "input_json": ""}
+                        tool_use_order.append(idx)
+                    tool_use_blocks[idx]["input_json"] += delta.get("partial_json", "")
             elif t == "message_delta":
                 if obj.get("usage"): usage.update(obj["usage"])
                 delta = obj.get("delta", {})
                 stop_reason = delta.get("stop_reason", stop_reason)
+
+        # Build tool_use list in order
+        result["tool_use"] = [tool_use_blocks[i] for i in tool_use_order if i in tool_use_blocks]
+
         result["text"] = "".join(text_parts)
         result["thinking"] = "".join(thinking_parts)
         result["usage"] = usage
@@ -109,9 +131,11 @@ def _reconstruct_response(response_bytes: bytes) -> dict:
             obj = json.loads(text)
             content = obj.get("content", [])
             texts = [cb.get("text", "") for cb in content if isinstance(cb, dict) and cb.get("type") == "text"]
+            tools = [cb for cb in content if isinstance(cb, dict) and cb.get("type") == "tool_use"]
             if texts:
                 result["text"] = "".join(texts)
                 result["thinking"] = ""
+                result["tool_use"] = [{"id": t.get("id",""), "name": t.get("name",""), "input_json": json.dumps(t.get("input",{}))} for t in tools]
                 result["usage"] = obj.get("usage", {})
                 result["stop_reason"] = obj.get("stop_reason")
                 return result

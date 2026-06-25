@@ -616,6 +616,45 @@ td mark {
   animation: fadeIn 150ms ease;
 }
 
+/* ── Earlier messages fold ─────────────────────── */
+.collapsible-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.collapsible-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  border-radius: var(--radius);
+  transition: background var(--transition);
+}
+.collapsible-header:hover {
+  background: var(--bg-hover);
+}
+.earlier-header {
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 2;
+}
+.earlier-header:hover {
+  color: var(--text-secondary);
+}
+.earlier-toggle {
+  margin-left: 6px;
+  font-size: 10px;
+}
+.earlier-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Request List ───────────────────────────────── */
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

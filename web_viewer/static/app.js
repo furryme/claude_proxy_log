@@ -463,22 +463,23 @@ function renderChat(data) {
   const response = data.response || {};
   const systemPrompt = data.system_prompt || "";
 
-  // Build chat messages
-  let html = "";
+  // Build chat messages — fold early messages when there are many
+  const MSG_RENDER_THRESHOLD = 4;  // fold when > this many context messages
+  const TAIL_COUNT = 3;            // always show these many at the end
+  const totalMsgs = messages.length;
 
-  messages.forEach((msg, idx) => {
+  function renderOneMessage(msg) {
     const role = msg.role || "unknown";
     const avatar = role === "user" ? "U" : role === "assistant" ? "A" : "S";
     const avatarClass = role;
 
-    html += `<div class="message">
+    let h = `<div class="message">
       <div class="message-avatar ${avatarClass}">${avatar}</div>
       <div class="message-content">
         <div class="message-role">${escHtml(role)}</div>`;
 
-    // Reasoning (thinking) BEFORE content
     if (msg.reasoning) {
-      html += `<div class="thinking-block collapsed">
+      h += `<div class="thinking-block collapsed">
         <div class="thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
           <span class="thinking-icon">&#128265;</span>
           <span>Thinking (${msg.reasoning.length} chars)</span>
@@ -488,16 +489,39 @@ function renderChat(data) {
       </div>`;
     }
 
-    // Content
     if (msg.content != null) {
-      html += `<div class="message-text">${renderContentBlocks(msg.content)}</div>`;
+      h += `<div class="message-text">${renderContentBlocks(msg.content)}</div>`;
     }
 
-    html += `</div></div>`;
-  });
+    return h + `</div></div>`;
+  }
+
+  let html = "";
+
+  if (totalMsgs > MSG_RENDER_THRESHOLD) {
+    const split = totalMsgs - TAIL_COUNT;
+    // Folded earlier messages — separate from .message to avoid flex nesting
+    html += `<div class="collapsible-group" id="earlierToggle">
+      <div class="collapsible-header" onclick="toggleEarlierMessages(this.parentElement, ${split}, event)">
+        <div class="message-avatar user" style="opacity:.5;font-size:11px">${split}</div>
+        <div class="message-role earlier-header">⬆ ${split} earlier messages <span class="earlier-toggle">&#9654;</span></div>
+      </div>
+      <div class="earlier-body hidden">
+        ${messages.slice(0, split).map(renderOneMessage).join("")}
+      </div>
+    </div>`;
+    // Tail messages — normal render
+    messages.slice(split).forEach(msg => {
+      html += renderOneMessage(msg);
+    });
+  } else {
+    messages.forEach(msg => {
+      html += renderOneMessage(msg);
+    });
+  }
 
   // Final assistant response from the response data
-  if (response.text) {
+  if (response.text || (response.tool_use && response.tool_use.length)) {
     html += `<div class="message">
       <div class="message-avatar assistant">A</div>
       <div class="message-content">
@@ -515,7 +539,30 @@ function renderChat(data) {
       </div>`;
     }
 
-    html += `<div class="message-text">${renderMarkdown(response.text)}</div>`;
+    if (response.text) {
+      html += `<div class="message-text">${renderMarkdown(response.text)}</div>`;
+    }
+
+    // Tool use blocks
+    if (response.tool_use && response.tool_use.length) {
+      response.tool_use.forEach(tu => {
+        let rawInput = tu.input_raw || tu.input_json || "";
+        let inputPreview = rawInput || "{}";
+        try { inputPreview = JSON.stringify(JSON.parse(inputPreview), null, 2); } catch(e) {}
+        // Extract short ID
+        let idLabel = "?";
+        const idMatch = tu.id.match(/call_([a-f0-9]+)/i);
+        idLabel = idMatch ? idMatch[1].substring(0, 8) : tu.id.substring(0, 12);
+        html += `<div class="tool-use-block">
+          <div class="tool-use-header" onclick="this.parentElement.classList.toggle('collapsed')">
+            <span class="tool-use-icon">&#9881;</span>
+            <span>Tool: ${escHtml(tu.name)} <span style="color:var(--text-muted);font-size:11px">[${escHtml(idLabel)}]</span></span>
+            <span class="tool-toggle">&#9660;</span>
+          </div>
+          <div class="tool-use-content">${escHtml(inputPreview)}</div>
+        </div>`;
+      });
+    }
 
     // Response meta
     const usage = response.usage || {};
@@ -571,9 +618,15 @@ function renderChat(data) {
   $("#btnToggleTools").style.display = tools.length ? "" : "none";
   $("#chatFooter").classList.remove("hidden");
 
-  // Next request button
+  // Prev / Next request buttons
   const allItems = state.requestList;
   const curIdx = allItems.findIndex(i => i.seq_id === state.currentSeqId);
+  if (curIdx > 0) {
+    $("#btnPrevReq").style.display = "";
+    $("#btnPrevReq").onclick = () => { viewRequest(allItems[curIdx - 1].seq_id); return false; };
+  } else {
+    $("#btnPrevReq").style.display = "none";
+  }
   if (curIdx >= 0 && curIdx < allItems.length - 1) {
     $("#btnNextReq").style.display = "";
     $("#btnNextReq").setAttribute("href", "#");
@@ -584,6 +637,15 @@ function renderChat(data) {
 
   state.systemVisible = false;
   state.toolsVisible = false;
+}
+
+function toggleEarlierMessages(wrapper, _count, e) {
+  if (e && e.target.closest(".earlier-body")) return; // don't toggle when clicking inside
+  const body = wrapper.querySelector(".earlier-body");
+  const toggle = wrapper.querySelector(".earlier-toggle");
+  const isHidden = body.classList.contains("hidden");
+  body.classList.toggle("hidden", !isHidden);
+  toggle.textContent = isHidden ? "▲" : "▶";
 }
 
 // ── Panel toggles ───────────────────────────────────
