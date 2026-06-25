@@ -416,8 +416,6 @@ td mark {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 16px;
-  max-height: 200px;
-  overflow-y: auto;
 }
 
 .chart-row {
