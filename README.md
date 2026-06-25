@@ -228,6 +228,11 @@ python archive_cron.py --remove
     "url": "http://upstream-host:port/path",
     "cookie_file": "/path/to/cookies.txt"  // 可选，支持 Netscape 格式和 key=value 格式
   },
+  "gpt-5.4": {
+    "url": "http://upstream-host:port/path",
+    "api_key": "sk-...",  // 可选，也支持 "$ENV_VAR" 引用环境变量
+    "patch_sse": true  // 可选，修复非 Anthropic 格式 SSE 流
+  },
   "SimpleModel": "http://another-upstream:port",  // 简写：仅 URL
   "__default_upstream__": "http://fallback-host:port"  // 未匹配 model 时的兜底
 }
@@ -237,6 +242,10 @@ python archive_cron.py --remove
 
 - `cookie_file` 支持两种格式：Netscape cookie 格式和 `key=value` 格式（每行一个）
 - Cookie 文件加载后缓存，代理运行期间不会重新读取
+- `api_key` 支持直接写 key 或 `"$ENV_VAR"` 引用环境变量
+- `patch_sse` — 当上游 SSE 流不符合 Anthropic 格式时启用修复（默认 `false`）：
+  - **注入 `event:` 行** — 部分上游（如 gpt-5.4）的 `data:` 前面没有 `event:` 行，Claude Code 的 SSE 解析器无法识别事件
+  - **注入 `input_tokens`** — 部分上游的 `message_delta` 事件只包含 `output_tokens`，补上 `"input_tokens": 1`
 - **安全提示**：`config/routes.json` 包含内网地址和 cookie 路径，应加入 `.gitignore`；提交时使用 `config/routes.example.json` 作为模板参考
 
 ## 依赖

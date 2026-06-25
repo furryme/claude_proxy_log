@@ -115,24 +115,26 @@ def _load_routes_config() -> tuple[dict, str]:
 ROUTES, DEFAULT_UPSTREAM = _load_routes_config()
 
 
-def _resolve_route(model: str | None) -> tuple[str, str | None, str | None]:
-    """返回 (upstream_url, cookie_header_or_None, api_key_or_None)
+def _resolve_route(model: str | None) -> tuple[str, str | None, str | None, bool]:
+    """返回 (upstream_url, cookie_header_or_None, api_key_or_None, patch_sse)
 
     model 为 None 或不在 ROUTES 中时返回 DEFAULT_UPSTREAM。
     api_key 已在 _load_routes_config() 中解析完毕，此处直接读取。
     """
     entry = ROUTES.get(model) if model else None
     if entry is None:
-        return DEFAULT_UPSTREAM, None, None
+        return DEFAULT_UPSTREAM, None, None, False
 
     if isinstance(entry, dict):
         url = entry["url"]
         cookie_file = entry.get("cookie_file")
         api_key = entry.get("api_key")
+        patch_sse = bool(entry.get("patch_sse", False))
     else:
         url = entry
         cookie_file = None
         api_key = None
+        patch_sse = False
 
     cookie_header = None
     if cookie_file and os.path.isfile(cookie_file):
@@ -158,7 +160,54 @@ def _resolve_route(model: str | None) -> tuple[str, str | None, str | None]:
             _COOKIE_CACHE[cookie_file] = "; ".join(cookies) if cookies else ""
         cookie_header = _COOKIE_CACHE[cookie_file]
 
-    return url, cookie_header, api_key
+    return url, cookie_header, api_key, patch_sse
+
+
+def _patch_sse_lines(text: str, inject: bool) -> str:
+    """Patch SSE stream for upstreams that don't follow Anthropic format.
+
+    Two fixes for gpt-5.4:
+    1. Inject missing event: <type> lines before data: lines
+       (Claude Code's SSE parser requires event: to recognize events)
+    2. Inject input_tokens into message_delta usage when upstream omits it
+    """
+    if not inject:
+        return text
+
+    result = []
+    prev_was_event = False  # tracks if last line was "event: ..."
+    for line in text.split("\n"):
+        if line.startswith("data: "):
+            # If no event: line preceded this data:, inject one from the type field
+            if not prev_was_event:
+                raw = line[len("data: "):]
+                try:
+                    evt = json.loads(raw)
+                    evt_type = evt.get("type", "")
+                    if evt_type:
+                        result.append(f"event: {evt_type}")
+                except json.JSONDecodeError:
+                    pass
+
+            # Inject missing input_tokens into message_delta
+            raw = line[len("data: "):]
+            try:
+                evt = json.loads(raw)
+                if (evt.get("type") == "message_delta"
+                        and isinstance(evt.get("usage"), dict)
+                        and "output_tokens" in evt["usage"]
+                        and "input_tokens" not in evt["usage"]):
+                    evt["usage"]["input_tokens"] = 1
+                    line = f"data: {json.dumps(evt, separators=(',', ':'))}"
+            except json.JSONDecodeError:
+                pass
+            prev_was_event = False
+        elif line.startswith("event: "):
+            prev_was_event = True
+        else:
+            prev_was_event = False
+        result.append(line)
+    return "\n".join(result)
 
 
 def forward(request: http.server.BaseHTTPRequestHandler) -> None:
@@ -188,7 +237,7 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
         except json.JSONDecodeError:
             print(f"  body not JSON, {len(body)} bytes", file=sys.stderr)
 
-    upstream, cookie_header, api_key = _resolve_route(model)
+    upstream, cookie_header, api_key, patch_sse = _resolve_route(model)
     target = upstream.rstrip("/") + path
 
     # Inject cookie header if configured
@@ -242,21 +291,40 @@ def forward(request: http.server.BaseHTTPRequestHandler) -> None:
 
         # Stream response back to client
         try:
-            if logger:
-                # Logging enabled: accumulate into single BytesIO + write
-                buf = io.BytesIO()
+            if patch_sse or logger:
+                # Python-level loop needed for SSE patching and/or logging
+                buf = io.BytesIO()  # for logging only
+                sse_buf = ""  # line buffer for cross-chunk SSE events
                 while True:
                     chunk = resp.read(RESPONSE_CHUNK_SIZE)
                     if not chunk:
                         break
-                    buf.write(chunk)
-                    request.wfile.write(chunk)
-                buf.seek(0)
-                raw = buf.read()
-                if raw:
-                    logger.add_response_chunk(raw)
+                    if logger:
+                        buf.write(chunk)
+
+                    # Patch SSE: inject event: lines + input_tokens (per-route)
+                    if patch_sse:
+                        chunk_text = chunk.decode("utf-8", errors="replace")
+                        sse_buf += chunk_text
+                        nl = sse_buf.rfind("\n")
+                        if nl >= 0:
+                            complete = sse_buf[:nl]
+                            sse_buf = sse_buf[nl + 1:]
+                            patched = _patch_sse_lines(complete, True)
+                            request.wfile.write(patched.encode("utf-8"))
+                        # else: hold in sse_buf until line is complete — avoids
+                        # double-write when an SSE data line spans chunk boundaries
+                    else:
+                        request.wfile.write(chunk)
+                # flush leftover incomplete SSE line
+                if patch_sse and sse_buf:
+                    patched = _patch_sse_lines(sse_buf, True)
+                    request.wfile.write(patched.encode("utf-8"))
+                if logger and buf.tell():
+                    buf.seek(0)
+                    logger.add_response_chunk(buf.read())
             else:
-                # No logging: zero-Python-loop, C-level copy
+                # No logging, no patching: zero-Python-loop, C-level copy
                 shutil.copyfileobj(resp, request.wfile, length=RESPONSE_CHUNK_SIZE)
         except BrokenPipeError:
             # Client disconnected — close upstream immediately so

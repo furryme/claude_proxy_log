@@ -14,7 +14,7 @@ Claude API 反向代理，新增抓包 + 数据归档功能，用于构建训练
 
 | 文件 | 职责 | 关键 API |
 |------|------|----------|
-| `claude_api_proxy.py` | 代理主程序，`ThreadingHTTPServer`，透明转发 | `forward(request)` — 创建 `RequestLogger`，转发请求/响应，调用 `logger.finish()` |
+| `claude_api_proxy.py` | 代理主程序，`ThreadingHTTPServer`，透明转发 | `forward(request)` — 创建 `RequestLogger`，转发请求/响应，`_patch_sse_lines()` 修复非 Anthropic SSE 格式，调用 `logger.finish()` |
 | `request_logger.py` | 请求/响应缓冲，`finish()` 非阻塞投递 | `RequestLogger.__init__(method, path, body_bytes, upstream_url, model)` / `add_response_chunk(raw_bytes)` / `finish(status, error)` |
 | `log_store.py` | SQLite 存储，后台 writer 线程 | `enqueue_entry(entry_dict)` / `get_connection()` / `DB_PATH` / `_next_seq_id()` / `_make_hour_key(ts)` |
 | `dataset_cleaner.py` | 从 SQLite 读数据 → 解压 body + response → SSE 重组 → 去重 → 输出 dataset.jsonl | `clean_time_window(db_path, hour_key, output_dir)` / `clean_directory(input_dir, output_dir)`（兼容旧调用） |
@@ -28,12 +28,17 @@ Claude API 反向代理，新增抓包 + 数据归档功能，用于构建训练
 
 ## 代理透明原则
 
-**代理是透明的管道，绝不修改请求或响应：**
+**代理是透明的管道，默认绝不修改请求或响应：**
 - 不修改或剥离客户端请求的任何 Header（包括 `Accept-Encoding`）
 - 不修改请求 body
 - 不修改响应内容、不修改响应 Header
 - 客户端主动断开（`BrokenPipeError`）= 正常行为，不记录错误
 - 唯一职责：原样转发 + 记录日志
+
+**唯一例外 — `patch_sse: true` 路由：** 当上游 SSE 流不符合 Anthropic 格式时，`_patch_sse_lines()` 会在响应流中做两处修复：
+1. **注入 `event:` 行** — `data:` 前面没有 `event:` 时，从 `data` 的 `type` 字段提取并补上
+2. **注入 `input_tokens`** — `message_delta` 的 `usage` 缺少 `input_tokens` 时补上 `"input_tokens": 1`
+日志记录的是**原始未修改**的响应字节。
 
 ## 存储架构
 
