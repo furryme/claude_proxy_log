@@ -153,6 +153,21 @@
           </div>
         </div>
 
+        <!-- Tool input viewer modal -->
+        <div class="tool-input-modal hidden" id="toolInputModal">
+          <div class="tool-input-backdrop" onclick="closeToolInputModal()"></div>
+          <div class="tool-input-content">
+            <div class="tool-input-header">
+              <span id="toolInputTitle" class="tool-input-title"></span>
+              <div class="tool-input-actions">
+                <button class="tool-input-btn" onclick="copyToolInput()" data-tooltip="复制 JSON">📋</button>
+                <button class="close-btn" onclick="closeToolInputModal()">&times;</button>
+              </div>
+            </div>
+            <div class="tool-input-body" id="toolInputBody"></div>
+          </div>
+        </div>
+
         <!-- Raw response modal -->
         <div class="raw-modal hidden" id="rawModal">
           <div class="raw-modal-backdrop" onclick="closeRawModal()"></div>

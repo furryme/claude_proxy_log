@@ -845,6 +845,46 @@ td mark {
   font-size: 10px;
 }
 
+.tool-view-btn {
+  background: none;
+  border: 1px solid transparent;
+  padding: 2px 6px;
+  margin: 0 4px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 4px;
+  transition: border-color var(--transition), background var(--transition);
+  flex-shrink: 0;
+  position: relative;
+}
+.tool-view-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.tool-view-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  white-space: nowrap;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms ease-in;
+  z-index: 200;
+}
+.tool-view-btn:hover::after {
+  opacity: 1;
+}
+
 .tool-result-block {
   margin-top: 8px;
   border: 1px solid var(--border);
@@ -1090,6 +1130,172 @@ td mark {
 
 .tool-json-block.collapsed .tool-json-content { display: none; }
 .tool-json-block.collapsed .tool-toggle { transform: rotate(-90deg); }
+
+/* ── Tool Input Viewer Modal ──────────────────── */
+.tool-input-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-input-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--modal-backdrop);
+}
+
+.tool-input-content {
+  position: relative;
+  width: 90%;
+  max-width: 860px;
+  max-height: 85vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tool-input-title {
+  font-weight: 600;
+  font-size: 15px;
+  font-family: var(--font-mono);
+  color: var(--cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-input-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: 12px;
+}
+
+.tool-input-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: border-color var(--transition), background var(--transition);
+  position: relative;
+}
+.tool-input-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.tool-input-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  white-space: nowrap;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms ease-in;
+  z-index: 200;
+}
+.tool-input-btn:hover::after {
+  opacity: 1;
+}
+
+.tool-input-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+
+/* Field rows inside modal */
+.tool-field-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.tool-field-row:last-child { border-bottom: none; }
+
+.tool-field-key {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+}
+
+.tool-field-type {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-family: var(--font-mono);
+  margin-left: 6px;
+}
+
+.tool-string-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+  margin: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tool-primitive {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  padding: 4px 0;
+}
+
+.tool-nested-json {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text-secondary);
+  background: var(--bg);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+  overflow-x: auto;
+  margin: 0;
+}
+
+.tool-nested-json.tool-nested-collapsed {
+  max-height: 200px;
+  overflow-y: auto;
+}
 
 /* ── Raw Modal ──────────────────────────────────── */
 .raw-modal {

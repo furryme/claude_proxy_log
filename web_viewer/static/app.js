@@ -27,6 +27,10 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// ── Tool input cache for modal (avoids inline JSON in onclick) ──
+let _toolInputCache = [];
+let _toolInputIdx = 0;
+
 // ── Utility ─────────────────────────────────────────
 function fmtSize(n) {
   if (n < 1024) return n + " B";
@@ -100,13 +104,16 @@ function renderContentBlocks(content) {
     return content.map(block => {
       if (block.type === "text") return renderMarkdown(block.text);
       if (block.type === "tool_use") {
+        const inputStr = JSON.stringify(block.input, null, 2);
+        const onclick = pushToolInput(block.input, block.name);
         return `<div class="tool-use-block">
           <div class="tool-use-header" onclick="this.parentElement.classList.toggle('collapsed')">
             <span class="tool-use-icon">&#9881;</span>
             <span>Tool: ${escHtml(block.name)}</span>
+            <button class="tool-view-btn" data-tooltip="展开查看 Tool Input" onclick="event.stopPropagation();${onclick}">📖</button>
             <span class="tool-toggle">&#9660;</span>
           </div>
-          <div class="tool-use-content">${escHtml(JSON.stringify(block.input, null, 2))}</div>
+          <div class="tool-use-content">${escHtml(inputStr)}</div>
         </div>`;
       }
       if (block.type === "tool_result") {
@@ -447,6 +454,10 @@ async function viewRequest(seqId) {
 }
 
 function renderChat(data) {
+  // Reset tool input cache for each chat render
+  _toolInputCache = [];
+  _toolInputIdx = 0;
+
   // Header meta
   $("#chatHeader").innerHTML = `
     <div class="chat-meta">
@@ -553,10 +564,15 @@ function renderChat(data) {
         let idLabel = "?";
         const idMatch = tu.id.match(/call_([a-f0-9]+)/i);
         idLabel = idMatch ? idMatch[1].substring(0, 8) : tu.id.substring(0, 12);
+        // Parse for modal
+        let parsedInput = {};
+        try { parsedInput = JSON.parse(rawInput); } catch(e) {}
+        const onclick = pushToolInput(parsedInput, tu.name);
         html += `<div class="tool-use-block">
           <div class="tool-use-header" onclick="this.parentElement.classList.toggle('collapsed')">
             <span class="tool-use-icon">&#9881;</span>
             <span>Tool: ${escHtml(tu.name)} <span style="color:var(--text-muted);font-size:11px">[${escHtml(idLabel)}]</span></span>
+            <button class="tool-view-btn" data-tooltip="展开查看 Tool Input" onclick="event.stopPropagation();${onclick}">📖</button>
             <span class="tool-toggle">&#9660;</span>
           </div>
           <div class="tool-use-content">${escHtml(inputPreview)}</div>
@@ -687,6 +703,80 @@ function closeToolModal() {
   $("#toolModal").classList.add("hidden");
 }
 
+// ── Tool Input Viewer Modal ─────────────────────────
+function pushToolInput(inputObj, toolName) {
+  _toolInputIdx++;
+  _toolInputCache[_toolInputIdx] = { input: inputObj, name: toolName };
+  return `openToolInputModal(${_toolInputIdx})`;
+}
+
+function openToolInputModal(idx) {
+  const entry = _toolInputCache[idx];
+  if (!entry) return;
+  const { input, name } = entry;
+  $("#toolInputTitle").textContent = `Tool Input: ${name}`;
+  $("#toolInputBody").innerHTML = formatToolInputForModal(input);
+  $("#toolInputModal").classList.remove("hidden");
+}
+
+function closeToolInputModal() {
+  $("#toolInputModal").classList.add("hidden");
+}
+
+function copyToolInput() {
+  const entry = _toolInputCache[_toolInputIdx];
+  const raw = entry ? JSON.stringify(entry.input, null, 2) : "";
+  navigator.clipboard.writeText(raw).then(() => {
+    const btn = document.querySelector('.tool-input-actions .tool-input-btn');
+    if (btn) { btn.textContent = '✅'; setTimeout(() => { btn.textContent = '📋'; }, 1500); }
+  });
+}
+
+function formatToolInputForModal(obj) {
+  if (typeof obj !== 'object' || obj === null) {
+    return `<div class="tool-primitive">${escHtml(String(obj))}</div>`;
+  }
+  const entries = Object.entries(obj);
+  if (!entries.length) return `<div class="tool-primitive">{}</div>`;
+
+  return entries.map(([key, value]) => {
+    let typeLabel = '';
+    let rendered = '';
+
+    if (value === null || value === undefined) {
+      typeLabel = 'null';
+      rendered = `<span class="tool-primitive">null</span>`;
+    } else if (typeof value === 'string') {
+      typeLabel = `string (${fmtSize(value.length)})`;
+      rendered = `<pre class="tool-string-value">${escHtml(value)}</pre>`;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      typeLabel = typeof value;
+      rendered = `<span class="tool-primitive">${value}</span>`;
+    } else if (Array.isArray(value)) {
+      typeLabel = `array [${value.length}]`;
+      const json = JSON.stringify(value, null, 2);
+      if (value.length > 100) {
+        rendered = `<details>
+          <summary>预览（前 30 / ${value.length} 项）</summary>
+          <pre class="tool-nested-json">${escHtml(json)}</pre></details>`;
+      } else {
+        rendered = `<pre class="tool-nested-json">${escHtml(json)}</pre>`;
+      }
+    } else {
+      typeLabel = 'object';
+      const innerKeys = Object.keys(value);
+      const json = JSON.stringify(value, null, 2);
+      rendered = `<details>
+        <summary>${innerKeys.length} fields</summary>
+        <pre class="tool-nested-json">${escHtml(json)}</pre></details>`;
+    }
+
+    return `<div class="tool-field-row">
+      <div class="tool-field-key">${escHtml(key)} <span class="tool-field-type">${typeLabel}</span></div>
+      ${rendered}
+    </div>`;
+  }).join('');
+}
 // ── Sidebar toggle ──────────────────────────────────
 function toggleSidebar() {
   $("#sidebar").classList.toggle("collapsed");
