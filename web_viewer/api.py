@@ -279,8 +279,14 @@ def convert_anthropic_to_openai(body_dict: dict) -> dict:
 
 # ── HTTP API ────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, fmt, *args):
         pass  # silence logs
+
+    def end_headers(self):
+        self.send_header("Connection", "close")
+        super().end_headers()
 
     def _json_response(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
